@@ -9,9 +9,6 @@ interface SidebarProps {
 export function Sidebar({ currentView, onViewChange }: SidebarProps) {
   return (
     <aside className="sidebar">
-      <div className="sidebar-header">
-        <h1>桌面助手</h1>
-      </div>
       <nav className="sidebar-nav">
         <button
           className={`nav-item ${currentView === 'dashboard' ? 'active' : ''}`}
@@ -33,6 +30,13 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
         >
           <span className="nav-icon">🔧</span>
           <span>系统工具</span>
+        </button>
+        <button
+          className={`nav-item ${currentView === 'settings' ? 'active' : ''}`}
+          onClick={() => onViewChange('settings')}
+        >
+          <span className="nav-icon">⚙️</span>
+          <span>设置</span>
         </button>
       </nav>
     </aside>

@@ -17,6 +17,11 @@
   color: var(--text-primary);
 }
 
+.schedule-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .btn-primary {
   background: var(--primary);
   color: white;
@@ -32,8 +37,30 @@
   background: var(--primary-hover);
 }
 
+.btn-popup {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-popup:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.btn-popup.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: white;
+}
+
 .schedule-form {
-  background: var(--bg-secondary);
+  background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 24px;
@@ -76,6 +103,86 @@
   gap: 16px;
 }
 
+.datetime-picker {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.datetime-picker .picker-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.datetime-picker .picker-label {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.datetime-picker .picker-separator {
+  font-size: 18px;
+  color: var(--text-secondary);
+  padding: 0 2px;
+  align-self: center;
+}
+
+.number-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.number-picker button {
+  width: 100%;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  transition: all 0.15s;
+}
+
+.number-picker button:hover {
+  background: var(--border);
+  color: var(--text-primary);
+}
+
+.number-picker input {
+  width: 48px;
+  height: 32px;
+  text-align: center;
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: 600;
+  padding: 0;
+  -moz-appearance: textfield;
+}
+
+.number-picker input::-webkit-outer-spin-button,
+.number-picker input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.number-picker input:focus {
+  outline: none;
+  background: rgba(74, 158, 255, 0.1);
+}
+
 .schedule-list {
   display: flex;
   flex-direction: column;
@@ -85,17 +192,66 @@
 .schedule-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 12px;
   padding: 16px;
-  background: var(--bg-secondary);
+  background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 8px;
+  transition: opacity 0.2s;
+}
+
+.schedule-item.completed {
+  opacity: 0.5;
+}
+
+.schedule-item.completed .schedule-item-title {
+  text-decoration: line-through;
+}
+
+.schedule-checkbox {
+  position: relative;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.schedule-checkbox input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.schedule-checkbox .checkmark {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.schedule-checkbox input:checked + .checkmark {
+  background: var(--success);
+  border-color: var(--success);
+}
+
+.schedule-checkbox input:checked + .checkmark::after {
+  content: '✓';
+  color: var(--bg-primary);
+  font-size: 13px;
+  font-weight: bold;
 }
 
 .schedule-item-info {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  flex: 1;
+  min-width: 0;
 }
 
 .schedule-item-time {
@@ -124,6 +280,7 @@
   font-size: 13px;
   cursor: pointer;
   transition: all 0.2s;
+  flex-shrink: 0;
 }
 
 .btn-delete:hover {

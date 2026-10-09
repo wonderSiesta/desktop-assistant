@@ -1,6 +1,8 @@
 node_modules
 dist
 dist-electron
+build-output
+release
 *.log
 .DS_Store
 Thumbs.db

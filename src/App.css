@@ -1,10 +1,75 @@
 .app {
   display: flex;
+  flex-direction: column;
   height: 100vh;
   background: var(--bg-primary);
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  padding: 0 4px 0 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.titlebar-drag {
+  flex: 1;
+  -webkit-app-region: drag;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.titlebar-title {
+  font-size: 13px;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.titlebar-controls {
+  display: flex;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-btn {
+  width: 36px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+
+.titlebar-btn:hover {
+  background: var(--border);
+  color: var(--text-primary);
+}
+
+.titlebar-btn-close:hover {
+  background: var(--error);
+  color: white;
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
 }
 
 .main-content {
   flex: 1;
   overflow-y: auto;
+  min-width: 0;
 }

@@ -4,36 +4,107 @@ import './Schedule.css'
 
 interface ScheduleProps {
   schedules: Schedule[]
-  onAdd: (schedule: Omit<Schedule, 'id' | 'notified'>) => void
+  onAdd: (schedule: Omit<Schedule, 'id' | 'notified' | 'completed'>) => void
   onRemove: (id: string) => void
+  onToggleComplete: (id: string) => void
 }
 
-export function ScheduleView({ schedules, onAdd, onRemove }: ScheduleProps) {
+const POPUP_APPS_KEY = 'desktop-assistant-popup-apps'
+
+function NumberPicker({ value, min, max, onChange, label }: {
+  value: number; min: number; max: number; onChange: (v: number) => void; label: string
+}) {
+  const clamp = (v: number) => Math.max(min, Math.min(max, v))
+
+  const handleInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value
+    if (raw === '') return
+    const num = parseInt(raw, 10)
+    if (!isNaN(num)) onChange(clamp(num))
+  }
+
+  return (
+    <div className="picker-group">
+      <span className="picker-label">{label}</span>
+      <div className="number-picker">
+        <button type="button" onClick={() => onChange(clamp(value + 1))}>&#9650;</button>
+        <input
+          type="number"
+          value={value}
+          min={min}
+          max={max}
+          onChange={handleInput}
+        />
+        <button type="button" onClick={() => onChange(clamp(value - 1))}>&#9660;</button>
+      </div>
+    </div>
+  )
+}
+
+function pad(n: number) {
+  return n.toString().padStart(2, '0')
+}
+
+export function ScheduleView({ schedules, onAdd, onRemove, onToggleComplete }: ScheduleProps) {
+  const now = new Date()
   const [showForm, setShowForm] = useState(false)
   const [title, setTitle] = useState('')
-  const [date, setDate] = useState('')
-  const [time, setTime] = useState('')
+  const [year, setYear] = useState(now.getFullYear())
+  const [month, setMonth] = useState(now.getMonth() + 1)
+  const [day, setDay] = useState(now.getDate())
+  const [hour, setHour] = useState(now.getHours())
+  const [minute, setMinute] = useState(now.getMinutes())
   const [description, setDescription] = useState('')
+  const [popupOpen, setPopupOpen] = useState(false)
+
+  const daysInMonth = new Date(year, month, 0).getDate()
+
+  const togglePopup = async () => {
+    if (popupOpen) {
+      window.electronAPI?.popupClose()
+      setPopupOpen(false)
+    } else {
+      const saved = localStorage.getItem(POPUP_APPS_KEY)
+      const apps = saved ? JSON.parse(saved) : ['WeChat', 'QQ', 'chrome', 'msedge', 'Code']
+      window.electronAPI?.popupOpen(apps)
+      setPopupOpen(true)
+    }
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!title || !date || !time) return
+    if (!title) return
 
-    onAdd({ title, date, time, description: description || undefined })
+    const dateStr = `${year}-${pad(month)}-${pad(day)}`
+    const timeStr = `${pad(hour)}:${pad(minute)}`
+    onAdd({ title, date: dateStr, time: timeStr, description: description || undefined })
     setTitle('')
-    setDate('')
-    setTime('')
     setDescription('')
     setShowForm(false)
+
+    const n = new Date()
+    setYear(n.getFullYear())
+    setMonth(n.getMonth() + 1)
+    setDay(n.getDate())
+    setHour(n.getHours())
+    setMinute(n.getMinutes())
   }
 
   return (
     <div className="schedule-view">
       <div className="schedule-header">
         <h2>日程安排</h2>
-        <button className="btn-primary" onClick={() => setShowForm(!showForm)}>
-          {showForm ? '取消' : '+ 新建日程'}
-        </button>
+        <div className="schedule-actions">
+          <button
+            className={`btn-popup ${popupOpen ? 'active' : ''}`}
+            onClick={togglePopup}
+          >
+            {popupOpen ? '关闭弹窗' : '开启弹窗'}
+          </button>
+          <button className="btn-primary" onClick={() => setShowForm(!showForm)}>
+            {showForm ? '取消' : '+ 新建日程'}
+          </button>
+        </div>
       </div>
 
       {showForm && (
@@ -48,24 +119,22 @@ export function ScheduleView({ schedules, onAdd, onRemove }: ScheduleProps) {
               required
             />
           </div>
-          <div className="form-row">
-            <div className="form-group">
-              <label>日期</label>
-              <input
-                type="date"
-                value={date}
-                onChange={e => setDate(e.target.value)}
-                required
-              />
+          <div className="form-group">
+            <label>日期</label>
+            <div className="datetime-picker">
+              <NumberPicker value={year} min={2024} max={2099} onChange={setYear} label="年" />
+              <span className="picker-separator">-</span>
+              <NumberPicker value={month} min={1} max={12} onChange={setMonth} label="月" />
+              <span className="picker-separator">-</span>
+              <NumberPicker value={day} min={1} max={daysInMonth} onChange={setDay} label="日" />
             </div>
-            <div className="form-group">
-              <label>时间</label>
-              <input
-                type="time"
-                value={time}
-                onChange={e => setTime(e.target.value)}
-                required
-              />
+          </div>
+          <div className="form-group">
+            <label>时间</label>
+            <div className="datetime-picker">
+              <NumberPicker value={hour} min={0} max={23} onChange={setHour} label="时" />
+              <span className="picker-separator">:</span>
+              <NumberPicker value={minute} min={0} max={59} onChange={setMinute} label="分" />
             </div>
           </div>
           <div className="form-group">
@@ -88,7 +157,15 @@ export function ScheduleView({ schedules, onAdd, onRemove }: ScheduleProps) {
           <p className="empty-state">暂无日程安排</p>
         ) : (
           schedules.map(schedule => (
-            <div key={schedule.id} className="schedule-item">
+            <div key={schedule.id} className={`schedule-item ${schedule.completed ? 'completed' : ''}`}>
+              <label className="schedule-checkbox">
+                <input
+                  type="checkbox"
+                  checked={schedule.completed || false}
+                  onChange={() => onToggleComplete(schedule.id)}
+                />
+                <span className="checkmark" />
+              </label>
               <div className="schedule-item-info">
                 <span className="schedule-item-time">
                   {schedule.date} {schedule.time}

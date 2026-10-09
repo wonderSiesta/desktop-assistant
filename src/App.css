@@ -1,0 +1,10 @@
+.app {
+  display: flex;
+  height: 100vh;
+  background: var(--bg-primary);
+}
+
+.main-content {
+  flex: 1;
+  overflow-y: auto;
+}

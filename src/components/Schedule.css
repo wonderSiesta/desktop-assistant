@@ -293,3 +293,22 @@
   color: var(--text-secondary);
   padding: 48px;
 }
+
+.parse-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.parse-error {
+  color: var(--error);
+  font-size: 13px;
+  margin: 8px 0 0;
+}
+
+.parse-hint {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin: 12px 0 0;
+}

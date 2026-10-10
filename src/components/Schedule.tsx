@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Schedule } from '../types'
+import { parseSchedule } from '../utils/parseSchedule'
 import './Schedule.css'
 
 interface ScheduleProps {
@@ -56,8 +57,41 @@ export function ScheduleView({ schedules, onAdd, onRemove, onToggleComplete }: S
   const [minute, setMinute] = useState(now.getMinutes())
   const [description, setDescription] = useState('')
   const [popupOpen, setPopupOpen] = useState(false)
+  const [showParse, setShowParse] = useState(false)
+  const [parseText, setParseText] = useState('')
+  const [parseError, setParseError] = useState('')
 
   const daysInMonth = new Date(year, month, 0).getDate()
+
+  const readClipboard = async () => {
+    const text = await window.electronAPI?.clipboardRead()
+    if (text && text.trim()) {
+      setParseText(text)
+      setParseError('')
+    } else {
+      setParseError('剪贴板没有可用的文本')
+    }
+  }
+
+  const handleRecognize = () => {
+    const parsed = parseSchedule(parseText)
+    if (!parsed) {
+      setParseError('未能识别出日程，请检查文本是否包含标题或日期时间')
+      return
+    }
+    const [y, mo, d] = parsed.date.split('-').map(Number)
+    const [h, mi] = parsed.time.split(':').map(Number)
+    setTitle(parsed.title)
+    setYear(y)
+    setMonth(mo)
+    setDay(d)
+    setHour(h)
+    setMinute(mi)
+    setDescription(parsed.description ?? '')
+    setParseError('')
+    setShowParse(false)
+    setShowForm(true)
+  }
 
   const togglePopup = async () => {
     if (popupOpen) {
@@ -96,16 +130,46 @@ export function ScheduleView({ schedules, onAdd, onRemove, onToggleComplete }: S
         <h2>日程安排</h2>
         <div className="schedule-actions">
           <button
+            className="btn-popup"
+            onClick={() => { setShowParse(!showParse); setShowForm(false) }}
+          >
+            {showParse ? '关闭识别' : '智能识别'}
+          </button>
+          <button
             className={`btn-popup ${popupOpen ? 'active' : ''}`}
             onClick={togglePopup}
           >
             {popupOpen ? '关闭弹窗' : '开启弹窗'}
           </button>
-          <button className="btn-primary" onClick={() => setShowForm(!showForm)}>
+          <button className="btn-primary" onClick={() => { setShowForm(!showForm); setShowParse(false) }}>
             {showForm ? '取消' : '+ 新建日程'}
           </button>
         </div>
       </div>
+
+      {showParse && (
+        <div className="schedule-form parse-panel">
+          <div className="form-group">
+            <label>粘贴一段日程描述，自动识别标题与时间</label>
+            <textarea
+              value={parseText}
+              onChange={e => { setParseText(e.target.value); setParseError('') }}
+              placeholder={'例如：\n日程表：计算机原理与嵌入式系统\n截止日期：2026/10/12 11:59 PM'}
+              rows={4}
+            />
+          </div>
+          {parseError && <p className="parse-error">{parseError}</p>}
+          <div className="parse-actions">
+            <button type="button" className="btn-popup" onClick={readClipboard}>
+              从剪贴板读取
+            </button>
+            <button type="button" className="btn-primary" onClick={handleRecognize}>
+              识别并填入
+            </button>
+          </div>
+          <p className="parse-hint">识别后可在下方表单中修改，确认无误再保存。</p>
+        </div>
+      )}
 
       {showForm && (
         <form className="schedule-form" onSubmit={handleSubmit}>

@@ -301,6 +301,18 @@
   margin-top: 4px;
 }
 
+.file-btn {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+
+.file-btn.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 .parse-error {
   color: var(--error);
   font-size: 13px;

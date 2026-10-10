@@ -60,8 +60,59 @@ export function ScheduleView({ schedules, onAdd, onRemove, onToggleComplete }: S
   const [showParse, setShowParse] = useState(false)
   const [parseText, setParseText] = useState('')
   const [parseError, setParseError] = useState('')
+  const [ocrBusy, setOcrBusy] = useState(false)
 
   const daysInMonth = new Date(year, month, 0).getDate()
+
+  const runOcr = async (dataUrl: string) => {
+    setOcrBusy(true)
+    setParseError('')
+    try {
+      const res = await window.electronAPI?.ocrImage(dataUrl)
+      if (res?.success && res.text && res.text.trim()) {
+        setParseText(res.text.trim())
+      } else {
+        setParseError('图片识别失败：' + (res?.error || '未识别到文字'))
+      }
+    } catch (e) {
+      setParseError('图片识别失败：' + (e instanceof Error ? e.message : '未知错误'))
+    } finally {
+      setOcrBusy(false)
+    }
+  }
+
+  const readClipboardImage = async () => {
+    const img = await window.electronAPI?.clipboardReadImage()
+    if (img) runOcr(img)
+    else setParseError('剪贴板没有图片')
+  }
+
+  const handleImageFile = (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      setParseError('请选择图片文件')
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') runOcr(reader.result)
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile()
+        if (file) {
+          e.preventDefault()
+          handleImageFile(file)
+          return
+        }
+      }
+    }
+  }
 
   const readClipboard = async () => {
     const text = await window.electronAPI?.clipboardRead()
@@ -150,19 +201,37 @@ export function ScheduleView({ schedules, onAdd, onRemove, onToggleComplete }: S
       {showParse && (
         <div className="schedule-form parse-panel">
           <div className="form-group">
-            <label>粘贴一段日程描述，自动识别标题与时间</label>
+            <label>粘贴日程文字或图片，自动识别标题与时间</label>
             <textarea
               value={parseText}
               onChange={e => { setParseText(e.target.value); setParseError('') }}
-              placeholder={'例如：\n日程表：计算机原理与嵌入式系统\n截止日期：2026/10/12 11:59 PM'}
+              onPaste={handlePaste}
+              placeholder={'例如：\n日程表：计算机原理与嵌入式系统\n截止日期：2026/10/12 11:59 PM\n\n也可以直接在这里粘贴截图（如微信截图），自动 OCR 识别'}
               rows={4}
             />
           </div>
+          {ocrBusy && <p className="parse-hint">正在识别图片文字，请稍候…</p>}
           {parseError && <p className="parse-error">{parseError}</p>}
           <div className="parse-actions">
             <button type="button" className="btn-popup" onClick={readClipboard}>
-              从剪贴板读取
+              读取剪贴板文字
             </button>
+            <button type="button" className="btn-popup" onClick={readClipboardImage} disabled={ocrBusy}>
+              识别剪贴板图片
+            </button>
+            <label className={`btn-popup file-btn ${ocrBusy ? 'disabled' : ''}`}>
+              选择图片文件
+              <input
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={e => {
+                  const f = e.target.files?.[0]
+                  if (f) handleImageFile(f)
+                  e.target.value = ''
+                }}
+              />
+            </label>
             <button type="button" className="btn-primary" onClick={handleRecognize}>
               识别并填入
             </button>

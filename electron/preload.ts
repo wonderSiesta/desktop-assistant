@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   clipboardReadImage: () => ipcRenderer.invoke('clipboard-read-image'),
   clipboardWriteImage: (dataUrl: string) => ipcRenderer.invoke('clipboard-write-image', dataUrl),
   fileSearch: (query: string) => ipcRenderer.invoke('file-search', query),
+  ocrImage: (dataUrl: string) => ipcRenderer.invoke('ocr-image', dataUrl),
 
   // Schedules
   getSchedules: () => ipcRenderer.invoke('get-schedules'),

@@ -1,13 +1,86 @@
 import { app, BrowserWindow, ipcMain, clipboard, dialog, screen, nativeImage } from 'electron'
 import { join } from 'path'
-import { exec } from 'child_process'
-import { readdir, stat } from 'fs/promises'
+import { exec, execFile } from 'child_process'
+import { readdir, stat, writeFile, mkdtemp } from 'fs/promises'
+import { tmpdir } from 'os'
 
 let mainWindow: BrowserWindow | null = null
 let popupWindow: BrowserWindow | null = null
 let processCheckInterval: ReturnType<typeof setInterval> | null = null
 let configuredApps: string[] = []
 let initialProcesses: Set<string> = new Set()
+
+// Windows.Media.Ocr 脚本：内嵌以避免打包后的路径问题，运行时写入临时目录执行
+const OCR_PS_SCRIPT = `param([string]$Path)
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
+  $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation\`1'
+})[0]
+function Await($WinRtTask, $ResultType) {
+  $asTask = $asTaskGeneric.MakeGenericMethod($ResultType)
+  $netTask = $asTask.Invoke($null, @($WinRtTask))
+  [void]$netTask.Wait(-1)
+  $netTask.Result
+}
+[Windows.Storage.StorageFile,Windows.Storage,ContentType=WindowsRuntime] | Out-Null
+[Windows.Graphics.Imaging.BitmapDecoder,Windows.Graphics.Imaging,ContentType=WindowsRuntime] | Out-Null
+[Windows.Media.Ocr.OcrEngine,Windows.Foundation,ContentType=WindowsRuntime] | Out-Null
+[Windows.Globalization.Language,Windows.Globalization,ContentType=WindowsRuntime] | Out-Null
+$file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($Path)) ([Windows.Storage.StorageFile])
+$stream = Await ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+$decoder = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+$bitmap = Await ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+$engine = $null
+foreach ($tag in @('zh-Hans-CN','zh-Hans','zh-CN','en-US')) {
+  try {
+    $lang = New-Object Windows.Globalization.Language $tag
+    $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage($lang)
+    if ($engine) { break }
+  } catch {}
+}
+if (-not $engine) { $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages() }
+if (-not $engine) { throw 'No OCR engine available' }
+$result = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
+$lines = @()
+foreach ($line in $result.Lines) {
+  $words = @()
+  foreach ($w in $line.Words) { $words += $w.Text }
+  $lines += ($words -join '')
+}
+[Console]::Out.Write($lines -join "\`n")
+`
+
+async function ocrImageDataUrl(dataUrl: string): Promise<{ success: boolean; text?: string; error?: string }> {
+  const match = /^data:image\/(\w+);base64,(.+)$/.exec(dataUrl)
+  if (!match) return { success: false, error: '无效的图片数据' }
+
+  let dir: string | null = null
+  try {
+    const buffer = Buffer.from(match[2], 'base64')
+    dir = await mkdtemp(join(tmpdir(), 'ocr-'))
+    const imgPath = join(dir, 'input.png')
+    const scriptPath = join(dir, 'ocr.ps1')
+    await writeFile(imgPath, buffer)
+    await writeFile(scriptPath, OCR_PS_SCRIPT, 'utf8')
+
+    const text = await new Promise<string>((resolve, reject) => {
+      execFile(
+        'powershell.exe',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, '-Path', imgPath],
+        { encoding: 'utf8', windowsHide: true },
+        (err, stdout, stderr) => {
+          if (err) reject(new Error(stderr?.trim() || err.message))
+          else resolve(stdout)
+        }
+      )
+    })
+    return { success: true, text: text.trim() }
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'OCR 失败' }
+  }
+}
 
 async function getRunningProcesses(): Promise<Set<string>> {
   const output = await new Promise<string>((resolve, reject) => {
@@ -200,6 +273,9 @@ ipcMain.handle('clipboard-write-image', (_event, dataUrl: string) => {
   clipboard.writeImage(image)
   return true
 })
+
+// OCR：识别图片中的文字
+ipcMain.handle('ocr-image', (_event, dataUrl: string) => ocrImageDataUrl(dataUrl))
 
 // System tools: file search
 ipcMain.handle('file-search', async (_event, query: string) => {

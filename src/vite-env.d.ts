@@ -14,6 +14,7 @@ interface ElectronAPI {
   clipboardReadImage: () => Promise<string | null>
   clipboardWriteImage: (dataUrl: string) => Promise<boolean>
   fileSearch: (query: string) => Promise<{ name: string; path: string; size: number }[]>
+  ocrImage: (dataUrl: string) => Promise<{ success: boolean; text?: string; error?: string }>
   getSchedules: () => Promise<unknown[]>
   addSchedule: (schedule: unknown) => Promise<unknown>
 }

@@ -24,7 +24,6 @@ interface ElectronAPI {
   clipboardHistoryClear: () => Promise<ClipboardEntry[]>
   clipboardHistoryDeleteBefore: (cutoff: number) => Promise<ClipboardEntry[]>
   fileSearch: (query: string) => Promise<{ name: string; path: string; size: number }[]>
-  ocrImage: (dataUrl: string) => Promise<{ success: boolean; text?: string; error?: string }>
   getSchedules: () => Promise<unknown[]>
   addSchedule: (schedule: unknown) => Promise<unknown>
 }

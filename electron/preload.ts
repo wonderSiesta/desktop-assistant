@@ -29,7 +29,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   clipboardHistoryClear: () => ipcRenderer.invoke('clipboard-history-clear'),
   clipboardHistoryDeleteBefore: (cutoff: number) => ipcRenderer.invoke('clipboard-history-delete-before', cutoff),
   fileSearch: (query: string) => ipcRenderer.invoke('file-search', query),
-  ocrImage: (dataUrl: string) => ipcRenderer.invoke('ocr-image', dataUrl),
 
   // Schedules
   getSchedules: () => ipcRenderer.invoke('get-schedules'),

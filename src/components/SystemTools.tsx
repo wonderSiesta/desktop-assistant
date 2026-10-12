@@ -5,7 +5,6 @@ import './SystemTools.css'
 type ToolView = 'menu' | 'launcher' | 'clipboard' | 'file-search' | 'notes'
 
 const LAUNCHER_KEY = 'desktop-assistant-launcher-apps'
-const CLIPBOARD_KEY = 'desktop-assistant-clipboard-history'
 const NOTES_KEY = 'desktop-assistant-notes'
 
 const DEFAULT_APPS: LauncherApp[] = [
@@ -139,71 +138,35 @@ function AppLauncher() {
 }
 
 function ClipboardManager() {
-  const [history, setHistory] = useState<ClipboardEntry[]>(() => {
-    const saved = localStorage.getItem(CLIPBOARD_KEY)
-    return saved ? JSON.parse(saved) : []
-  })
+  const [history, setHistory] = useState<ClipboardEntry[]>([])
   const [input, setInput] = useState('')
   const [status, setStatus] = useState('')
   const [previewImage, setPreviewImage] = useState<string | null>(null)
   const [showHint, setShowHint] = useState(false)
-  const historyRef = useRef(history)
-  historyRef.current = history
-  const lastSeenRef = useRef<string | null>(null)
+  const sigRef = useRef('')
 
-  const saveHistory = (entries: ClipboardEntry[]) => {
-    setHistory(entries)
-    try {
-      localStorage.setItem(CLIPBOARD_KEY, JSON.stringify(entries))
-    } catch {
-      const textOnly = entries.filter(e => e.type === 'text')
-      localStorage.setItem(CLIPBOARD_KEY, JSON.stringify(textOnly))
-      setHistory(textOnly)
-    }
-  }
-
+  // 历史记录由主进程持续维护，这里只负责读取展示
   useEffect(() => {
-    const poll = async () => {
-      const current = historyRef.current
-
-      const imageData = await window.electronAPI?.clipboardReadImage()
-      if (imageData) {
-        if (lastSeenRef.current === imageData) return
-        lastSeenRef.current = imageData
-        const exists = current.some(e => e.type === 'image' && e.content === imageData)
-        if (!exists) {
-          const entry: ClipboardEntry = {
-            id: Date.now().toString(),
-            type: 'image',
-            content: imageData,
-            timestamp: Date.now(),
-          }
-          saveHistory([entry, ...current].slice(0, 50))
-        }
-        return
-      }
-
-      const text = await window.electronAPI?.clipboardRead()
-      if (text && text.trim()) {
-        if (lastSeenRef.current === text) return
-        lastSeenRef.current = text
-        const exists = current.some(e => e.type === 'text' && e.content === text)
-        if (!exists) {
-          const entry: ClipboardEntry = {
-            id: Date.now().toString(),
-            type: 'text',
-            content: text,
-            timestamp: Date.now(),
-          }
-          saveHistory([entry, ...current].slice(0, 100))
-        }
+    let mounted = true
+    const load = async () => {
+      const list = await window.electronAPI?.clipboardHistoryGet()
+      if (!mounted || !list) return
+      const sig = list.map(e => e.id).join(',')
+      if (sig !== sigRef.current) {
+        sigRef.current = sig
+        setHistory(list)
       }
     }
-
-    poll()
-    const interval = setInterval(poll, 1500)
-    return () => clearInterval(interval)
+    load()
+    const interval = setInterval(load, 1500)
+    return () => { mounted = false; clearInterval(interval) }
   }, [])
+
+  const applyList = (list?: ClipboardEntry[]) => {
+    if (!list) return
+    sigRef.current = list.map(e => e.id).join(',')
+    setHistory(list)
+  }
 
   const copyText = async () => {
     if (!input.trim()) return
@@ -224,17 +187,16 @@ function ClipboardManager() {
     setTimeout(() => setStatus(''), 2000)
   }
 
-  const deleteEntry = (id: string) => {
-    saveHistory(history.filter(e => e.id !== id))
+  const deleteEntry = async (id: string) => {
+    applyList(await window.electronAPI?.clipboardHistoryDelete(id))
   }
 
-  const deleteAll = () => {
-    saveHistory([])
+  const deleteAll = async () => {
+    applyList(await window.electronAPI?.clipboardHistoryClear())
   }
 
-  const deleteOlderThan = (ms: number) => {
-    const cutoff = Date.now() - ms
-    saveHistory(history.filter(e => e.timestamp > cutoff))
+  const deleteOlderThan = async (ms: number) => {
+    applyList(await window.electronAPI?.clipboardHistoryDeleteBefore(Date.now() - ms))
   }
 
   const formatTime = (ts: number) => {
@@ -248,9 +210,9 @@ function ClipboardManager() {
       {status && <div className="tool-status">{status}</div>}
 
       <div className="clipboard-capture">
-        <span className="monitoring-badge">● 自动监听中</span>
+        <span className="monitoring-badge">● 后台持续监听中</span>
         <button className="btn-hint" onClick={() => setShowHint(!showHint)} title="功能说明">?</button>
-        {showHint && <span className="capture-hint">自动检测剪贴板变化，新内容立刻记录，相同内容只记录一次。</span>}
+        {showHint && <span className="capture-hint">应用运行期间由后台持续监听剪贴板，即使不在本界面也会记录；新内容立刻记录，相同内容只记录一次。</span>}
       </div>
 
       <div className="clipboard-write">

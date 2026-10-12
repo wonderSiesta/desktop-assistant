@@ -141,3 +141,89 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+.hotkey-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.hotkey-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.hotkey-toggle input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.hotkey-current {
+  padding: 6px 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  color: var(--text-primary);
+  letter-spacing: 1px;
+}
+
+.hotkey-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.hotkey-actions button {
+  padding: 9px 18px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.hotkey-actions button:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: rgba(74, 158, 255, 0.1);
+}
+
+.hotkey-actions button.active {
+  border-color: var(--primary);
+  background: rgba(74, 158, 255, 0.18);
+  color: var(--primary);
+}
+
+.hotkey-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.hotkey-status {
+  margin: 14px 0 0;
+  font-size: 13px;
+}
+
+.hotkey-status.ok {
+  color: var(--primary);
+}
+
+.hotkey-status.err {
+  color: var(--error);
+}
+
+.hotkey-hint {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}

@@ -210,7 +210,7 @@ function ClipboardManager() {
       {status && <div className="tool-status">{status}</div>}
 
       <div className="clipboard-capture">
-        <span className="monitoring-badge">● 后台持续监听中</span>
+        <span className="monitoring-badge">图片请到「截图收纳」查看；文字自动记录默认关闭</span>
         <button className="btn-hint" onClick={() => setShowHint(!showHint)} title="功能说明">?</button>
         {showHint && <span className="capture-hint">应用运行期间由后台持续监听剪贴板，即使不在本界面也会记录；新内容立刻记录，相同内容只记录一次。</span>}
       </div>

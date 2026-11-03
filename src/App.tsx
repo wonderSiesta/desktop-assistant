@@ -4,14 +4,17 @@ import { Dashboard } from './components/Dashboard'
 import { ScheduleView } from './components/Schedule'
 import { SystemTools } from './components/SystemTools'
 import { Settings } from './components/Settings'
+import { Captures } from './components/Captures'
 import { useSchedule } from './hooks/useSchedule'
-import type { ViewType } from './types'
+import type { ViewType, MainTarget } from './types'
 import './App.css'
 
 const THEME_KEY = 'desktop-assistant-theme'
 
 export function App() {
-  const [currentView, setCurrentView] = useState<ViewType>('dashboard')
+  const [currentView, setCurrentView] = useState<ViewType>('captures')
+  const [captureTarget,setCaptureTarget]=useState<MainTarget>({nonce:0})
+  useEffect(()=>{const navigate=(target:MainTarget)=>{setCaptureTarget(target);setCurrentView('captures')};const off=window.electronAPI.onMainNavigate(navigate);void window.electronAPI.mainTargetGet().then(navigate);return off},[])
   const [theme, setTheme] = useState(() => localStorage.getItem(THEME_KEY) || 'dark')
   const { schedules, upcomingSchedules, addSchedule, removeSchedule, toggleComplete } = useSchedule()
 
@@ -26,6 +29,7 @@ export function App() {
 
   const renderView = () => {
     switch (currentView) {
+      case 'captures': return <Captures target={captureTarget}/>
       case 'dashboard':
         return <Dashboard upcomingSchedules={upcomingSchedules} />
       case 'schedule':

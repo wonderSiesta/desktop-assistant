@@ -1,20 +1,7 @@
-import { app, BrowserWindow, ipcMain, clipboard, dialog, screen, nativeImage, Tray, Menu, globalShortcut, shell } from 'electron'
-import { join, resolve } from 'path'
-import { mkdirSync } from 'fs'
+import { app, BrowserWindow, ipcMain, clipboard, dialog, screen, nativeImage, Tray, Menu, globalShortcut } from 'electron'
+import { join } from 'path'
 import { exec } from 'child_process'
 import { readdir, stat, writeFile, readFile } from 'fs/promises'
-import { startCaptures, stopCaptures, textHistoryEnabled, setSnippingHandler, onCaptureEvent } from './captures'
-import { startPet, stopPet, restorePet, hidePetFor, openLibrary, petMenu } from './pet'
-let mainTarget:{id?:string;filter?:'all'|'favorites';nonce:number}={filter:'all',nonce:0}
-
-// Preserve the upstream app's existing user-data location; explicit overrides stay isolated.
-app.setName('desktop-assistant')
-const captureDataDir=resolve(process.env.CAPTURE_DATA_DIR || app.getPath('userData'))
-mkdirSync(captureDataDir,{recursive:true})
-app.setPath('userData', captureDataDir)
-const singleInstance = app.requestSingleInstanceLock()
-if (!singleInstance) app.quit()
-app.on('second-instance', () => showMainWindow())
 
 let mainWindow: BrowserWindow | null = null
 let popupWindow: BrowserWindow | null = null
@@ -42,6 +29,7 @@ let clipboardHistoryPath = ''
 let clipboardLastSeen: string | null = null
 let clipboardInterval: ReturnType<typeof setInterval> | null = null
 const MAX_TEXT_ENTRIES = 100
+const MAX_IMAGE_ENTRIES = 20
 
 async function getRunningProcesses(): Promise<Set<string>> {
   const output = await new Promise<string>((resolve, reject) => {
@@ -83,8 +71,24 @@ function createWindow() {
   mainWindow.on('close', (e) => {
     if (isQuitting) return
     e.preventDefault()
-    mainWindow?.hide()
-    restorePet()
+    dialog.showMessageBox(mainWindow!, {
+      type: 'question',
+      buttons: ['关闭应用', '后台运行'],
+      defaultId: 0,
+      cancelId: 1,
+      title: '关闭桌面助手',
+      message: '要关闭应用，还是让它在后台继续运行？',
+      detail: '选择「后台运行」后窗口会隐藏，剪贴板监听等功能继续工作，可从系统托盘图标重新打开。',
+    }).then(({ response }) => {
+      if (response === 0) {
+        isQuitting = true
+        app.quit()
+      } else {
+        mainWindow?.hide()
+      }
+    }).catch(() => {
+      mainWindow?.hide()
+    })
   })
 
   mainWindow.on('closed', () => {
@@ -122,7 +126,6 @@ function showMainWindow() {
     return
   }
   if (!mainWindow.isVisible()) mainWindow.show()
-  if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.focus()
 }
 
@@ -131,15 +134,13 @@ function createTray() {
   tray = new Tray(createTrayIcon())
   tray.setToolTip('桌面助手')
   const contextMenu = Menu.buildFromTemplate([
-    { label: '找回桌面助手', click: () => restorePet() },
-    { label: '打开桌面助手', click: () => {void openLibrary()} },
-    { label: '宠物菜单', click: () => petMenu() },
+    { label: '显示主窗口', click: () => showMainWindow() },
     { type: 'separator' },
     { label: '退出', click: () => { isQuitting = true; app.quit() } },
   ])
   tray.setContextMenu(contextMenu)
-  tray.on('click', () => restorePet())
-  tray.on('double-click', () => {void openLibrary()})
+  tray.on('click', () => showMainWindow())
+  tray.on('double-click', () => showMainWindow())
 }
 
 function createPopupWindow() {
@@ -260,8 +261,11 @@ function stopProcessCheck() {
 
 function persistClipboardHistory() {
   if (!clipboardHistoryPath) return
-  // Keep legacy image entries; only newly captured images use the file-backed library.
-  writeFile(clipboardHistoryPath, JSON.stringify(clipboardHistory), 'utf8').catch(() => { /* Keep in-memory history on failure. */ })
+  writeFile(clipboardHistoryPath, JSON.stringify(clipboardHistory), 'utf8').catch(() => {
+    // 写入失败时，退化到只保留文本记录再试一次
+    const textOnly = clipboardHistory.filter(e => e.type === 'text')
+    writeFile(clipboardHistoryPath, JSON.stringify(textOnly), 'utf8').catch(() => { /* 放弃本次持久化 */ })
+  })
 }
 
 async function loadClipboardHistory() {
@@ -277,7 +281,10 @@ async function loadClipboardHistory() {
 
 function addClipboardEntry(entry: ClipboardEntry) {
   clipboardHistory = [entry, ...clipboardHistory]
-  {
+  if (entry.type === 'image') {
+    let n = 0
+    clipboardHistory = clipboardHistory.filter(e => e.type !== 'image' || ++n <= MAX_IMAGE_ENTRIES)
+  } else {
     let n = 0
     clipboardHistory = clipboardHistory.filter(e => e.type !== 'text' || ++n <= MAX_TEXT_ENTRIES)
   }
@@ -285,10 +292,17 @@ function addClipboardEntry(entry: ClipboardEntry) {
 }
 
 function pollClipboard() {
-  // Images now live in the dedicated file-backed capture library.
-  if (!textHistoryEnabled()) return
-  // Inspect format names, not the full bitmap, even when text history is enabled.
-  if (clipboard.availableFormats().some(format=>/^(image\/|PNG$|CF_DIB|CF_BITMAP|Bitmap$|DeviceIndependentBitmap$)/i.test(format))) return
+  // 图片优先：剪贴板含图片时按图片记录
+  const image = clipboard.readImage()
+  if (!image.isEmpty()) {
+    const dataUrl = image.toDataURL()
+    if (clipboardLastSeen === dataUrl) return
+    clipboardLastSeen = dataUrl
+    if (!clipboardHistory.some(e => e.type === 'image' && e.content === dataUrl)) {
+      addClipboardEntry({ id: Date.now().toString(), type: 'image', content: dataUrl, timestamp: Date.now() })
+    }
+    return
+  }
 
   const text = clipboard.readText()
   if (text && text.trim()) {
@@ -302,36 +316,18 @@ function pollClipboard() {
 
 function startClipboardMonitor() {
   if (clipboardInterval) clearInterval(clipboardInterval)
-  try { pollClipboard() } catch { /* clipboard is temporarily busy */ }
-  clipboardInterval = setInterval(() => { try { pollClipboard() } catch { /* retry next interval */ } }, 1500)
+  pollClipboard()
+  clipboardInterval = setInterval(pollClipboard, 1500)
 }
 
 app.whenReady().then(async () => {
-  if (!singleInstance) return
-  await startCaptures()
   await loadClipboardHistory()
   startClipboardMonitor()
   await loadHotkeyConfig()
   applyHotkey()
-  let snipTimer:ReturnType<typeof setTimeout>|null=null
-  let cancelSnip:()=>void=()=>{}
-  const snip=async()=>{
-    if(process.platform!=='win32')throw new Error('请使用当前系统的截图快捷键。')
-    if(mainWindow?.isVisible())mainWindow.hide()
-    if(popupWindow?.isVisible())popupWindow.hide()
-    hidePetFor(30_000)
-    cancelSnip();if(snipTimer)clearTimeout(snipTimer)
-    const restore=()=>{restorePet();cancelSnip();if(snipTimer)clearTimeout(snipTimer)}
-    cancelSnip=onCaptureEvent(event=>{if(event.kind==='captured')restore()})
-    snipTimer=setTimeout(restore,30_000)
-    await new Promise(resolve=>setTimeout(resolve,180))
-    try{await shell.openExternal('ms-screenclip:')}catch(e){restore();throw e}
-    return true
-  }
-  setSnippingHandler(snip)
-  await startPet({snip,quit:()=>{isQuitting=true;app.quit()},openMain:target=>{mainTarget=target;showMainWindow();mainWindow?.webContents.send('main-navigate',mainTarget)}})
+  createWindow()
   createTray()
-}).catch(error => { dialog.showErrorBox('桌面助手启动失败', error instanceof Error?error.message:'无法打开本机数据目录'); app.quit() })
+})
 
 app.on('window-all-closed', () => {
   if (!isQuitting && process.platform !== 'darwin') {
@@ -344,14 +340,14 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   isQuitting = true
   if (clipboardInterval) clearInterval(clipboardInterval)
-  stopCaptures()
-  stopPet()
   globalShortcut.unregisterAll()
   if (tray) { tray.destroy(); tray = null }
 })
 
 app.on('activate', () => {
-  restorePet()
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow()
+  }
 })
 
 // Window controls
@@ -365,7 +361,6 @@ ipcMain.on('window-maximize', () => {
 })
 ipcMain.on('window-close', () => mainWindow?.close())
 ipcMain.handle('window-is-maximized', () => mainWindow?.isMaximized() ?? false)
-ipcMain.handle('main-target-get',()=>mainTarget)
 
 // Popup window controls
 ipcMain.on('popup-open', (_event, appNames: string[]) => {

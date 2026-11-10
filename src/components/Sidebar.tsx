@@ -10,7 +10,6 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
   return (
     <aside className="sidebar">
       <nav className="sidebar-nav">
-        <button className={`nav-item ${currentView === 'captures' ? 'active' : ''}`} onClick={() => onViewChange('captures')}><span className="nav-icon">▧</span><span>截图收纳</span></button>
         <button
           className={`nav-item ${currentView === 'dashboard' ? 'active' : ''}`}
           onClick={() => onViewChange('dashboard')}

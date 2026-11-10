@@ -4,7 +4,6 @@ import electron from 'vite-plugin-electron'
 import { resolve } from 'path'
 
 export default defineConfig({
-  server: {host:'127.0.0.1',port:3220,strictPort:true},
   plugins: [
     react(),
     electron([

@@ -142,12 +142,29 @@
   cursor: not-allowed;
 }
 
-.hotkey-row {
+.hotkey-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hotkey-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
-  margin-bottom: 16px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.hotkey-item .hotkey-toggle {
+  flex: 0 0 130px;
+}
+
+.hotkey-item .hotkey-current {
+  margin-right: auto;
 }
 
 .hotkey-toggle {
@@ -167,7 +184,7 @@
 
 .hotkey-current {
   padding: 6px 14px;
-  background: var(--bg-secondary);
+  background: var(--bg-primary);
   border: 1px solid var(--border);
   border-radius: 8px;
   font-size: 14px;
@@ -176,37 +193,31 @@
   letter-spacing: 1px;
 }
 
-.hotkey-actions {
+.hotkey-item-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 
-.hotkey-actions button {
-  padding: 9px 18px;
-  background: var(--bg-secondary);
+.hotkey-item-actions button {
+  padding: 7px 14px;
+  background: var(--bg-primary);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 7px;
   color: var(--text-primary);
   font-size: 13px;
   cursor: pointer;
   transition: all 0.2s;
 }
 
-.hotkey-actions button:hover:not(:disabled) {
+.hotkey-item-actions button:hover {
   border-color: var(--primary);
   background: rgba(74, 158, 255, 0.1);
 }
 
-.hotkey-actions button.active {
+.hotkey-item-actions button.active {
   border-color: var(--primary);
   background: rgba(74, 158, 255, 0.18);
   color: var(--primary);
-}
-
-.hotkey-actions button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 
 .hotkey-status {
@@ -220,10 +231,4 @@
 
 .hotkey-status.err {
   color: var(--error);
-}
-
-.hotkey-hint {
-  margin: 12px 0 0;
-  font-size: 12px;
-  color: var(--text-secondary);
 }

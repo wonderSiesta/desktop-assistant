@@ -16,7 +16,12 @@ const THEMES = [
 ]
 
 const POPUP_APPS_KEY = 'desktop-assistant-popup-apps'
-const DEFAULT_HOTKEY = 'Ctrl+O'
+
+const HOTKEY_DEFS: { id: string; label: string; def: string }[] = [
+  { id: 'schedule-popup', label: '日程弹窗', def: 'Ctrl+O' },
+  { id: 'app-launcher', label: '应用启动器', def: 'Ctrl+Alt+L' },
+  { id: 'clipboard', label: '剪贴板管理', def: 'Ctrl+Alt+V' },
+]
 
 const KEY_MAP: Record<string, string> = {
   ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
@@ -40,27 +45,35 @@ export function Settings({ theme, onThemeChange }: SettingsProps) {
   })
   const [newApp, setNewApp] = useState('')
 
-  // 全局快捷键
-  const [hotkeyEnabled, setHotkeyEnabled] = useState(false)
-  const [hotkeyAccel, setHotkeyAccel] = useState(DEFAULT_HOTKEY)
-  const [recording, setRecording] = useState(false)
+  // 全局快捷键（多个，按 id 管理）
+  const [hotkeys, setHotkeys] = useState<Record<string, { enabled: boolean; accelerator: string }>>({})
+  const [recordingId, setRecordingId] = useState<string | null>(null)
   const [hotkeyStatus, setHotkeyStatus] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
+
+  // 日程提醒总开关
+  const [remindersEnabled, setRemindersEnabled] = useState(true)
 
   useEffect(() => {
     window.electronAPI?.hotkeyGet().then(cfg => {
-      if (cfg) {
-        setHotkeyEnabled(cfg.enabled)
-        setHotkeyAccel(normalizeAccel(cfg.accelerator))
-      }
+      if (cfg) setHotkeys(cfg)
+    })
+    window.electronAPI?.remindersGet().then(enabled => {
+      if (typeof enabled === 'boolean') setRemindersEnabled(enabled)
     })
   }, [])
 
-  const applyHotkey = async (enabled: boolean, accel: string) => {
-    const res = await window.electronAPI?.hotkeySet(enabled, accel)
+  const toggleReminders = async () => {
+    const next = !remindersEnabled
+    setRemindersEnabled(next)
+    const saved = await window.electronAPI?.remindersSet(next)
+    if (typeof saved === 'boolean') setRemindersEnabled(saved)
+  }
+
+  const applyHotkey = async (id: string, enabled: boolean, accel: string) => {
+    const res = await window.electronAPI?.hotkeySet(id, enabled, accel)
     if (res?.success) {
-      setHotkeyEnabled(enabled)
-      setHotkeyAccel(accel)
-      setHotkeyStatus({ type: 'ok', text: enabled ? `已启用：${displayAccel(accel)}` : '已关闭快捷键' })
+      setHotkeys(prev => ({ ...prev, [id]: { enabled, accelerator: accel } }))
+      setHotkeyStatus({ type: 'ok', text: enabled ? `已启用：${displayAccel(accel)}` : `已保存：${displayAccel(accel)}（未启用）` })
     } else {
       setHotkeyStatus({ type: 'err', text: res?.error || '设置失败' })
     }
@@ -69,7 +82,7 @@ export function Settings({ theme, onThemeChange }: SettingsProps) {
 
   // 录制快捷键
   useEffect(() => {
-    if (!recording) return
+    if (!recordingId) return
     // 临时注销全局快捷键，否则系统会吞掉按键，无法录制
     window.electronAPI?.hotkeyPause()
     const onKey = (e: KeyboardEvent) => {
@@ -91,8 +104,9 @@ export function Settings({ theme, onThemeChange }: SettingsProps) {
         return
       }
       const accel = [...parts, key].join('+')
-      setRecording(false)
-      applyHotkey(hotkeyEnabled, accel)
+      const id = recordingId
+      setRecordingId(null)
+      applyHotkey(id, hotkeys[id]?.enabled ?? false, accel)
     }
     window.addEventListener('keydown', onKey, true)
     return () => {
@@ -101,16 +115,7 @@ export function Settings({ theme, onThemeChange }: SettingsProps) {
       window.electronAPI?.hotkeyResume()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recording, hotkeyEnabled])
-
-  const toggleEnabled = () => {
-    applyHotkey(!hotkeyEnabled, hotkeyAccel)
-  }
-
-  const resetHotkey = () => {
-    setRecording(false)
-    applyHotkey(hotkeyEnabled, DEFAULT_HOTKEY)
-  }
+  }, [recordingId, hotkeys])
 
   const savePopupApps = (apps: string[]) => {
     setPopupApps(apps)
@@ -149,33 +154,50 @@ export function Settings({ theme, onThemeChange }: SettingsProps) {
       </div>
 
       <div className="settings-section">
-        <h3>日程弹窗快捷键</h3>
-        <p className="settings-desc">按下快捷键可随时打开 / 关闭日程弹窗（默认 Ctrl + O）</p>
-        <div className="hotkey-row">
-          <label className="hotkey-toggle">
-            <input type="checkbox" checked={hotkeyEnabled} onChange={toggleEnabled} />
-            <span>启用快捷键</span>
-          </label>
-          <span className="hotkey-current">{displayAccel(hotkeyAccel)}</span>
-        </div>
-        <div className="hotkey-actions">
-          <button
-            className={`btn-popup ${recording ? 'active' : ''}`}
-            onClick={() => { setRecording(r => !r); setHotkeyStatus(null) }}
-            disabled={!hotkeyEnabled}
-          >
-            {recording ? '请按下组合键…' : '修改快捷键'}
-          </button>
-          <button className="btn-popup" onClick={resetHotkey} disabled={!hotkeyEnabled}>
-            恢复默认 (Ctrl + O)
-          </button>
+        <h3>全局快捷键</h3>
+        <p className="settings-desc">按下快捷键快速打开对应功能；若窗口已在前台且正停留在该页，再按一次会隐藏到后台。每项可单独启用、自定义键位。</p>
+        <div className="hotkey-list">
+          {HOTKEY_DEFS.map(def => {
+            const entry = hotkeys[def.id] || { enabled: false, accelerator: def.def }
+            const isRecording = recordingId === def.id
+            return (
+              <div key={def.id} className="hotkey-item">
+                <label className="hotkey-toggle">
+                  <input
+                    type="checkbox"
+                    checked={entry.enabled}
+                    onChange={() => applyHotkey(def.id, !entry.enabled, normalizeAccel(entry.accelerator))}
+                  />
+                  <span>{def.label}</span>
+                </label>
+                <span className="hotkey-current">{displayAccel(entry.accelerator)}</span>
+                <div className="hotkey-item-actions">
+                  <button
+                    className={isRecording ? 'active' : ''}
+                    onClick={() => { setRecordingId(isRecording ? null : def.id); setHotkeyStatus(null) }}
+                  >
+                    {isRecording ? '请按下组合键…' : '修改'}
+                  </button>
+                  <button onClick={() => { setRecordingId(null); applyHotkey(def.id, entry.enabled, def.def) }}>
+                    恢复默认
+                  </button>
+                </div>
+              </div>
+            )
+          })}
         </div>
         {hotkeyStatus && (
           <p className={`hotkey-status ${hotkeyStatus.type}`}>{hotkeyStatus.text}</p>
         )}
-        {!hotkeyEnabled && (
-          <p className="hotkey-hint">勾选「启用快捷键」后即可自定义。</p>
-        )}
+      </div>
+
+      <div className="settings-section">
+        <h3>日程提醒</h3>
+        <p className="settings-desc">到达日程时间时弹出系统通知，并提前 10 分钟预告一次。点击通知可跳转到日程页。</p>
+        <label className="hotkey-toggle">
+          <input type="checkbox" checked={remindersEnabled} onChange={toggleReminders} />
+          <span>启用日程提醒</span>
+        </label>
       </div>
 
       <div className="settings-section">

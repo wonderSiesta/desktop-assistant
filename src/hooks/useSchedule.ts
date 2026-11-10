@@ -36,6 +36,8 @@ export function useSchedule() {
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(schedules))
+    // 同步给主进程提醒调度器（主窗口为数据源，隐藏到托盘时仍存活）
+    window.electronAPI?.schedulesSync?.(schedules)
   }, [schedules])
 
   useEffect(() => {

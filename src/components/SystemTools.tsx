@@ -2,10 +2,9 @@ import { useState, useEffect, useRef } from 'react'
 import type { LauncherApp, ClipboardEntry } from '../types'
 import './SystemTools.css'
 
-type ToolView = 'menu' | 'launcher' | 'clipboard' | 'file-search' | 'notes'
+export type ToolView = 'menu' | 'launcher' | 'clipboard' | 'file-search'
 
 const LAUNCHER_KEY = 'desktop-assistant-launcher-apps'
-const NOTES_KEY = 'desktop-assistant-notes'
 
 const DEFAULT_APPS: LauncherApp[] = [
   { key: 'notepad', name: '记事本', icon: '📝', command: 'notepad.exe' },
@@ -325,8 +324,17 @@ function FileSearch() {
           <span className="results-count">找到 {results.length} 个结果</span>
           {results.map((r, i) => (
             <div key={i} className="search-result-item">
-              <span className="result-name">{r.name}</span>
+              <div className="result-info">
+                <span className="result-name">{r.name}</span>
+                <span className="result-path" title={r.path}>{r.path}</span>
+              </div>
               <span className="result-size">{formatSize(r.size)}</span>
+              <button
+                className="btn-small"
+                onClick={() => window.electronAPI?.showInFolder(r.path)}
+              >
+                打开所在文件夹
+              </button>
             </div>
           ))}
         </div>
@@ -335,48 +343,24 @@ function FileSearch() {
   )
 }
 
-function QuickNotes() {
-  const [notes, setNotes] = useState(() => localStorage.getItem(NOTES_KEY) || '')
-
-  const save = (value: string) => {
-    setNotes(value)
-    localStorage.setItem(NOTES_KEY, value)
-  }
-
-  return (
-    <div className="tool-panel">
-      <h3>快速笔记</h3>
-      <textarea
-        className="notes-textarea"
-        value={notes}
-        onChange={e => save(e.target.value)}
-        placeholder="随手记录想法..."
-        rows={15}
-      />
-      <div className="notes-footer">
-        <span>{notes.length} 字</span>
-        <span>自动保存</span>
-      </div>
-    </div>
-  )
+interface SystemToolsProps {
+  activeTool: ToolView
+  onActiveToolChange: (tool: ToolView) => void
 }
 
-export function SystemTools() {
-  const [activeTool, setActiveTool] = useState<ToolView>('menu')
-
+export function SystemTools({ activeTool, onActiveToolChange }: SystemToolsProps) {
   const renderTool = () => {
     switch (activeTool) {
       case 'launcher': return <AppLauncher />
       case 'clipboard': return <ClipboardManager />
       case 'file-search': return <FileSearch />
-      case 'notes': return <QuickNotes />
     }
   }
 
   if (activeTool !== 'menu') {
     return (
       <div className="system-tools">
-        <button className="btn-back" onClick={() => setActiveTool('menu')}>
+        <button className="btn-back" onClick={() => onActiveToolChange('menu')}>
           ← 返回
         </button>
         {renderTool()}
@@ -388,25 +372,20 @@ export function SystemTools() {
     <div className="system-tools">
       <h2>系统工具</h2>
       <div className="tools-grid">
-        <div className="tool-card" onClick={() => setActiveTool('launcher')}>
+        <div className="tool-card" onClick={() => onActiveToolChange('launcher')}>
           <span className="tool-icon">🚀</span>
           <span className="tool-name">应用启动器</span>
           <span className="tool-desc">快速启动常用应用</span>
         </div>
-        <div className="tool-card" onClick={() => setActiveTool('clipboard')}>
+        <div className="tool-card" onClick={() => onActiveToolChange('clipboard')}>
           <span className="tool-icon">📋</span>
           <span className="tool-name">剪贴板管理</span>
           <span className="tool-desc">文本和图片历史记录</span>
         </div>
-        <div className="tool-card" onClick={() => setActiveTool('file-search')}>
+        <div className="tool-card" onClick={() => onActiveToolChange('file-search')}>
           <span className="tool-icon">🔍</span>
           <span className="tool-name">文件搜索</span>
           <span className="tool-desc">快速查找文件</span>
-        </div>
-        <div className="tool-card" onClick={() => setActiveTool('notes')}>
-          <span className="tool-icon">📝</span>
-          <span className="tool-name">快速笔记</span>
-          <span className="tool-desc">随手记录想法</span>
         </div>
       </div>
     </div>

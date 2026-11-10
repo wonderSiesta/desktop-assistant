@@ -1,6 +1,6 @@
 {
   "name": "desktop-assistant",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "桌面助手 - Desktop Assistant",
   "main": "dist-electron/main.js",
   "scripts": {

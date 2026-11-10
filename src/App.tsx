@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Sidebar } from './components/Sidebar'
 import { Dashboard } from './components/Dashboard'
 import { ScheduleView } from './components/Schedule'
-import { SystemTools } from './components/SystemTools'
+import { SystemTools, type ToolView } from './components/SystemTools'
 import { Settings } from './components/Settings'
 import { useSchedule } from './hooks/useSchedule'
 import type { ViewType } from './types'
@@ -12,6 +12,7 @@ const THEME_KEY = 'desktop-assistant-theme'
 
 export function App() {
   const [currentView, setCurrentView] = useState<ViewType>('dashboard')
+  const [toolsActive, setToolsActive] = useState<ToolView>('menu')
   const [theme, setTheme] = useState(() => localStorage.getItem(THEME_KEY) || 'dark')
   const { schedules, upcomingSchedules, addSchedule, removeSchedule, toggleComplete } = useSchedule()
 
@@ -19,6 +20,25 @@ export function App() {
     document.documentElement.setAttribute('data-theme', theme)
     localStorage.setItem(THEME_KEY, theme)
   }, [theme])
+
+  // 全局快捷键请求跳转到某个系统工具；若已在该页且窗口处于前台，则再按一次隐藏到后台
+  useEffect(() => {
+    const off = window.electronAPI?.onNavigateTool(({ tool, wasFocused }) => {
+      if (wasFocused && currentView === 'tools' && toolsActive === tool) {
+        window.electronAPI?.hide()
+        return
+      }
+      setToolsActive(tool as ToolView)
+      setCurrentView('tools')
+    })
+    return () => { off?.() }
+  }, [currentView, toolsActive])
+
+  // 提醒通知被点击 → 跳转到日程页
+  useEffect(() => {
+    const off = window.electronAPI?.onNavigateSchedule?.(() => setCurrentView('schedule'))
+    return () => { off?.() }
+  }, [])
 
   const handleMinimize = () => window.electronAPI?.minimize()
   const handleMaximize = () => window.electronAPI?.maximize()
@@ -38,7 +58,7 @@ export function App() {
           />
         )
       case 'tools':
-        return <SystemTools />
+        return <SystemTools activeTool={toolsActive} onActiveToolChange={setToolsActive} />
       case 'settings':
         return <Settings theme={theme} onThemeChange={setTheme} />
     }

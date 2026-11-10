@@ -1,6 +1,6 @@
-import { app, BrowserWindow, ipcMain, clipboard, dialog, screen, nativeImage, Tray, Menu, globalShortcut } from 'electron'
+import { app, BrowserWindow, ipcMain, clipboard, dialog, screen, nativeImage, Tray, Menu, globalShortcut, shell, Notification } from 'electron'
 import { join } from 'path'
-import { exec } from 'child_process'
+import { exec, execFile } from 'child_process'
 import { readdir, stat, writeFile, readFile } from 'fs/promises'
 
 let mainWindow: BrowserWindow | null = null
@@ -11,11 +11,45 @@ let processCheckInterval: ReturnType<typeof setInterval> | null = null
 let configuredApps: string[] = []
 let initialProcesses: Set<string> = new Set()
 
-// 全局快捷键（切换日程弹窗）
-const DEFAULT_HOTKEY = 'CommandOrControl+O'
-let hotkeyEnabled = false
-let hotkeyAccelerator = DEFAULT_HOTKEY
+// 全局快捷键（多个，按 id 管理）
+type HotkeyId = 'schedule-popup' | 'app-launcher' | 'clipboard'
+interface HotkeyEntry { enabled: boolean; accelerator: string }
+const DEFAULT_HOTKEYS: Record<HotkeyId, string> = {
+  'schedule-popup': 'CommandOrControl+O',
+  'app-launcher': 'CommandOrControl+Alt+L',
+  'clipboard': 'CommandOrControl+Alt+V',
+}
+const HOTKEY_IDS: HotkeyId[] = ['schedule-popup', 'app-launcher', 'clipboard']
+// 新快捷键默认启用，日程弹窗快捷键保持默认关闭（沿用既有行为）
+const DEFAULT_ENABLED: Record<HotkeyId, boolean> = {
+  'schedule-popup': false,
+  'app-launcher': true,
+  'clipboard': true,
+}
+let hotkeys: Record<HotkeyId, HotkeyEntry> = {
+  'schedule-popup': { enabled: DEFAULT_ENABLED['schedule-popup'], accelerator: DEFAULT_HOTKEYS['schedule-popup'] },
+  'app-launcher': { enabled: DEFAULT_ENABLED['app-launcher'], accelerator: DEFAULT_HOTKEYS['app-launcher'] },
+  'clipboard': { enabled: DEFAULT_ENABLED['clipboard'], accelerator: DEFAULT_HOTKEYS['clipboard'] },
+}
 let hotkeyConfigPath = ''
+
+// 日程提醒（主进程调度 + 系统通知）
+interface ScheduleItem {
+  id: string
+  title: string
+  date: string
+  time: string
+  completed?: boolean
+}
+type ReminderStage = 'pre' | 'exact'
+let schedulesCache: ScheduleItem[] = []
+let remindersEnabled = true
+let reminderState: Record<string, Partial<Record<ReminderStage, boolean>>> = {}
+let reminderStatePath = ''
+let reminderTimer: ReturnType<typeof setInterval> | null = null
+const PRE_LEAD_MS = 10 * 60 * 1000      // 提前 10 分钟预告
+const EXACT_GRACE_MS = 5 * 60 * 1000    // 准点提醒的宽限窗口，超过则不再补弹
+const REMINDER_TICK_MS = 20 * 1000
 
 // 剪贴板历史（主进程持续监听，独立于渲染界面）
 interface ClipboardEntry {
@@ -199,8 +233,18 @@ async function loadHotkeyConfig() {
   try {
     const raw = await readFile(hotkeyConfigPath, 'utf-8')
     const cfg = JSON.parse(raw)
-    if (typeof cfg.enabled === 'boolean') hotkeyEnabled = cfg.enabled
-    if (typeof cfg.accelerator === 'string' && cfg.accelerator.trim()) hotkeyAccelerator = cfg.accelerator
+    // 旧格式 { enabled, accelerator } 迁移到 schedule-popup
+    if (typeof cfg.enabled === 'boolean') hotkeys['schedule-popup'].enabled = cfg.enabled
+    if (typeof cfg.accelerator === 'string' && cfg.accelerator.trim()) hotkeys['schedule-popup'].accelerator = cfg.accelerator
+    // 新格式 { [id]: { enabled, accelerator } }
+    for (const id of HOTKEY_IDS) {
+      const e = cfg[id]
+      if (e && typeof e === 'object') {
+        if (typeof e.enabled === 'boolean') hotkeys[id].enabled = e.enabled
+        if (typeof e.accelerator === 'string' && e.accelerator.trim()) hotkeys[id].accelerator = e.accelerator
+      }
+    }
+    if (typeof cfg.remindersEnabled === 'boolean') remindersEnabled = cfg.remindersEnabled
   } catch {
     // 首次运行，使用默认值
   }
@@ -209,15 +253,123 @@ async function loadHotkeyConfig() {
 async function persistHotkeyConfig() {
   if (!hotkeyConfigPath) return
   try {
-    await writeFile(hotkeyConfigPath, JSON.stringify({ enabled: hotkeyEnabled, accelerator: hotkeyAccelerator }, null, 2), 'utf-8')
+    await writeFile(hotkeyConfigPath, JSON.stringify({ ...hotkeys, remindersEnabled }, null, 2), 'utf-8')
   } catch { /* ignore */ }
 }
 
-function applyHotkey(): { success: boolean; error?: string } {
+function focusTool(tool: 'launcher' | 'clipboard') {
+  const send = (wasFocused: boolean) => {
+    mainWindow?.webContents.send('navigate-tool', { tool, wasFocused })
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow()
+    mainWindow!.webContents.once('did-finish-load', () => setTimeout(() => send(false), 200))
+    return
+  }
+  const wasFocused = mainWindow.isVisible() && mainWindow.isFocused()
+  if (!mainWindow.isVisible()) mainWindow.show()
+  mainWindow.focus()
+  if (mainWindow.webContents.isLoading()) {
+    mainWindow.webContents.once('did-finish-load', () => setTimeout(() => send(wasFocused), 200))
+  } else {
+    send(wasFocused)
+  }
+}
+
+function hotkeyAction(id: HotkeyId) {
+  if (id === 'schedule-popup') togglePopupWindow()
+  else if (id === 'app-launcher') focusTool('launcher')
+  else if (id === 'clipboard') focusTool('clipboard')
+}
+
+function registerAllHotkeys(): { success: boolean; failed: HotkeyId[] } {
   globalShortcut.unregisterAll()
-  if (!hotkeyEnabled || !hotkeyAccelerator) return { success: true }
-  const ok = globalShortcut.register(hotkeyAccelerator, togglePopupWindow)
-  return ok ? { success: true } : { success: false, error: '快捷键注册失败，可能已被其他程序占用' }
+  const failed: HotkeyId[] = []
+  for (const id of HOTKEY_IDS) {
+    const entry = hotkeys[id]
+    if (!entry.enabled || !entry.accelerator) continue
+    const ok = globalShortcut.register(entry.accelerator, () => hotkeyAction(id))
+    if (!ok) failed.push(id)
+  }
+  return { success: failed.length === 0, failed }
+}
+
+async function loadReminderState() {
+  reminderStatePath = join(app.getPath('userData'), 'reminder-state.json')
+  try {
+    const raw = await readFile(reminderStatePath, 'utf-8')
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object') reminderState = parsed
+  } catch {
+    reminderState = {}
+  }
+}
+
+function persistReminderState() {
+  if (!reminderStatePath) return
+  writeFile(reminderStatePath, JSON.stringify(reminderState), 'utf-8').catch(() => { /* ignore */ })
+}
+
+function fireReminder(s: ScheduleItem, stage: ReminderStage) {
+  const isPre = stage === 'pre'
+  const body = `${isPre ? '10 分钟后' : '现在'}：${s.title}（${s.date} ${s.time}）`
+  const notification = new Notification({
+    title: isPre ? '日程即将开始' : '日程提醒',
+    body,
+  })
+  notification.on('click', () => {
+    showMainWindow()
+    mainWindow?.webContents.send('navigate-schedule')
+  })
+  notification.show()
+}
+
+function reminderTick() {
+  if (!remindersEnabled) return
+  const now = Date.now()
+  const activeIds = new Set<string>()
+  let changed = false
+
+  for (const s of schedulesCache) {
+    if (s.completed) continue
+    const t = new Date(`${s.date}T${s.time}`).getTime()
+    if (isNaN(t)) continue
+    activeIds.add(s.id)
+    const st = reminderState[s.id] || (reminderState[s.id] = {})
+    if (!st.pre && now >= t - PRE_LEAD_MS && now < t) {
+      st.pre = true
+      fireReminder(s, 'pre')
+      changed = true
+    }
+    if (!st.exact && now >= t && now < t + EXACT_GRACE_MS) {
+      st.exact = true
+      fireReminder(s, 'exact')
+      changed = true
+    }
+  }
+
+  // 清理已删除日程的状态
+  for (const id of Object.keys(reminderState)) {
+    if (!activeIds.has(id)) {
+      delete reminderState[id]
+      changed = true
+    }
+  }
+
+  if (changed) persistReminderState()
+}
+
+function startReminderScheduler() {
+  if (reminderTimer) clearInterval(reminderTimer)
+  reminderTick()
+  reminderTimer = setInterval(reminderTick, REMINDER_TICK_MS)
+}
+
+function stopReminderScheduler() {
+  if (reminderTimer) {
+    clearInterval(reminderTimer)
+    reminderTimer = null
+  }
 }
 
 async function startProcessCheck(appNames: string[]) {
@@ -324,7 +476,9 @@ app.whenReady().then(async () => {
   await loadClipboardHistory()
   startClipboardMonitor()
   await loadHotkeyConfig()
-  applyHotkey()
+  registerAllHotkeys()
+  await loadReminderState()
+  startReminderScheduler()
   createWindow()
   createTray()
 })
@@ -340,6 +494,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   isQuitting = true
   if (clipboardInterval) clearInterval(clipboardInterval)
+  stopReminderScheduler()
   globalShortcut.unregisterAll()
   if (tray) { tray.destroy(); tray = null }
 })
@@ -360,6 +515,7 @@ ipcMain.on('window-maximize', () => {
   }
 })
 ipcMain.on('window-close', () => mainWindow?.close())
+ipcMain.on('window-hide', () => mainWindow?.hide())
 ipcMain.handle('window-is-maximized', () => mainWindow?.isMaximized() ?? false)
 
 // Popup window controls
@@ -374,35 +530,44 @@ ipcMain.on('popup-close', () => {
 ipcMain.handle('popup-is-open', () => popupWindow !== null && !popupWindow.isDestroyed())
 
 // 全局快捷键设置
-ipcMain.handle('hotkey-get', () => ({ enabled: hotkeyEnabled, accelerator: hotkeyAccelerator }))
-ipcMain.handle('hotkey-set', async (_event, enabled: boolean, accelerator: string) => {
-  const accel = (accelerator || '').trim() || DEFAULT_HOTKEY
-  // 先尝试用新值注册，失败则回滚
-  const prevEnabled = hotkeyEnabled
-  const prevAccel = hotkeyAccelerator
-  hotkeyEnabled = enabled
-  hotkeyAccelerator = accel
-  const result = applyHotkey()
-  if (!result.success) {
-    hotkeyEnabled = prevEnabled
-    hotkeyAccelerator = prevAccel
-    applyHotkey()
-    return result
+ipcMain.handle('hotkey-get', () => hotkeys)
+ipcMain.handle('hotkey-set', async (_event, id: HotkeyId, enabled: boolean, accelerator: string) => {
+  if (!HOTKEY_IDS.includes(id)) return { success: false, error: '未知的快捷键' }
+  const accel = (accelerator || '').trim() || DEFAULT_HOTKEYS[id]
+  // 先尝试用新值注册，失败则回滚该项
+  const prev = { ...hotkeys[id] }
+  hotkeys[id] = { enabled, accelerator: accel }
+  const { failed } = registerAllHotkeys()
+  if (failed.includes(id)) {
+    hotkeys[id] = prev
+    registerAllHotkeys()
+    return { success: false, error: '快捷键注册失败，可能已被其他程序占用' }
   }
   await persistHotkeyConfig()
-  return { success: true, enabled: hotkeyEnabled, accelerator: hotkeyAccelerator }
+  return { success: true, enabled: hotkeys[id].enabled, accelerator: hotkeys[id].accelerator }
 })
 // 录制时临时注销，避免系统吞掉按键；结束后恢复
 ipcMain.on('hotkey-pause', () => globalShortcut.unregisterAll())
-ipcMain.on('hotkey-resume', () => applyHotkey())
+ipcMain.on('hotkey-resume', () => registerAllHotkeys())
 
 // System tools: app launcher
+// 使用 execFile 直接启动，不经 shell，避免命令注入。命令为可执行名（走 PATH）或完整路径。
 ipcMain.handle('launch-app', async (_event, cmd: string) => {
+  const command = (cmd || '').trim()
+  if (!command) return { success: false, error: '命令为空' }
   return new Promise((resolve) => {
-    exec(`start ${cmd}`, (err) => {
-      resolve(err ? { success: false, error: err.message } : { success: true })
+    const child = execFile(command, { windowsHide: true }, (err) => {
+      if (err) resolve({ success: false, error: err.message })
     })
+    child.unref?.()
+    // 启动请求已发出即视为成功（GUI 进程独立运行，不等待其退出）
+    setTimeout(() => resolve({ success: true }), 300)
   })
+})
+
+// 在资源管理器中定位文件
+ipcMain.on('show-in-folder', (_event, path: string) => {
+  if (typeof path === 'string' && path) shell.showItemInFolder(path)
 })
 
 // System tools: clipboard (text)
@@ -484,3 +649,18 @@ ipcMain.handle('file-search', async (_event, query: string) => {
 // Schedules (kept for IPC compatibility, actual storage is in localStorage)
 ipcMain.handle('get-schedules', () => [])
 ipcMain.handle('add-schedule', (_event, schedule) => schedule)
+
+// 日程提醒：渲染层把日程列表同步给主进程调度器
+ipcMain.on('schedules-sync', (_event, list: ScheduleItem[]) => {
+  if (Array.isArray(list)) {
+    schedulesCache = list
+    reminderTick()
+  }
+})
+ipcMain.handle('reminders-get', () => remindersEnabled)
+ipcMain.handle('reminders-set', async (_event, enabled: boolean) => {
+  remindersEnabled = !!enabled
+  await persistHotkeyConfig()
+  if (remindersEnabled) reminderTick()
+  return remindersEnabled
+})
